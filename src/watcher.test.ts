@@ -158,8 +158,8 @@ describe("watcher", () => {
     handle = null;
   });
 
-  it("graceful degradation: file still verified and restored when bond call fails", async () => {
-    vi.mocked(bonds.postBond).mockRejectedValue(new Error("AgentGate unreachable"));
+  it("fail-closed default: connection error restores file from snapshot", async () => {
+    vi.mocked(bonds.postBond).mockRejectedValue(new Error("fetch failed: ECONNREFUSED"));
 
     const file = path.join(tmpDir, "guarded.txt");
     fs.writeFileSync(file, "precious data");
@@ -171,13 +171,57 @@ describe("watcher", () => {
       onEvent,
     });
 
-    fs.writeFileSync(file, "");
+    fs.writeFileSync(file, "modified content");
     await waitForEvent(events, "failed");
 
-    const errorEvent = events.find((e) => e.event === "error");
-    expect(errorEvent).toBeDefined();
-    expect(errorEvent!.detail).toContain("AgentGate unreachable");
+    const failedEvent = events.find((e) => e.event === "failed");
+    expect(failedEvent).toBeDefined();
+    expect(failedEvent!.detail).toContain("fail-closed");
     expect(fs.readFileSync(file, "utf8")).toBe("precious data");
+  });
+
+  it("fail-open flag: connection error allows change through", async () => {
+    vi.mocked(bonds.postBond).mockRejectedValue(new Error("fetch failed: ECONNREFUSED"));
+
+    const file = path.join(tmpDir, "open.txt");
+    fs.writeFileSync(file, "original content here");
+
+    handle = await startWatcher({
+      directory: tmpDir,
+      agentGateUrl: "http://fake",
+      apiKey: "fake",
+      failOpen: true,
+      sizeChangeThreshold: 0.5,
+      onEvent,
+    });
+
+    // Small change within 50% threshold
+    fs.writeFileSync(file, "original content here!");
+    await waitForEvent(events, "passed");
+
+    // File should keep the new content (not restored)
+    expect(fs.readFileSync(file, "utf8")).toBe("original content here!");
+  });
+
+  it("non-connection bond error (400) still runs verification normally", async () => {
+    vi.mocked(bonds.postBond).mockRejectedValue(new Error("AgentGate /v1/bonds/lock failed (400): bad request"));
+
+    const file = path.join(tmpDir, "api-err.txt");
+    fs.writeFileSync(file, "important");
+
+    handle = await startWatcher({
+      directory: tmpDir,
+      agentGateUrl: "http://fake",
+      apiKey: "fake",
+      onEvent,
+    });
+
+    // Modify within threshold — verification should still pass despite bond error
+    fs.writeFileSync(file, "important!");
+    await waitForEvent(events, "passed");
+
+    // Change was allowed through because it's a 400 (API error), not a connection error
+    expect(fs.readFileSync(file, "utf8")).toBe("important!");
   });
 
   it("restore-triggered chokidar event does not post a second bond", async () => {

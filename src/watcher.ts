@@ -13,6 +13,7 @@ export interface WatcherOptions {
   sizeChangeThreshold?: number;
   verifyCmd?: string;
   verifyCmdTimeoutMs?: number;
+  failOpen?: boolean;
   onEvent?: (event: string, detail: string) => void;
 }
 
@@ -28,6 +29,7 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     sizeChangeThreshold = DEFAULT_CONFIG.sizeChangeThreshold,
     verifyCmd = DEFAULT_CONFIG.verifyCmd,
     verifyCmdTimeoutMs = DEFAULT_CONFIG.verifyCmdTimeoutMs,
+    failOpen = false,
     onEvent,
   } = options;
 
@@ -86,16 +88,27 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
   // Restore-echo suppression — skip the chokidar event triggered by our own restore
   const justRestored = new Set<string>();
 
-  // Bond lifecycle helper — posts bond, executes action, returns actionId.
-  // Returns null if AgentGate calls fail (graceful degradation).
-  async function tryBondLifecycle(filePath: string, action: string): Promise<string | null> {
+  // Bond lifecycle result — distinguishes connection errors from API errors
+  type BondResult = { actionId: string } | { actionId: null; connectionError: boolean };
+
+  function isConnectionError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return msg.includes("fetch failed") ||
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("ENOTFOUND") ||
+      msg.includes("timed out") ||
+      msg.includes("UND_ERR");
+  }
+
+  async function tryBondLifecycle(filePath: string, action: string): Promise<BondResult> {
     try {
       const bondId = await postBond(agentGateUrl, apiKey, keys, identityId, filePath, action);
       const actionId = await executeBondedAction(agentGateUrl, apiKey, keys, identityId, bondId, filePath, action);
-      return actionId;
+      return { actionId };
     } catch (err) {
+      const connErr = isConnectionError(err);
       log("error", `Bond lifecycle failed for ${path.basename(filePath)}: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
+      return { actionId: null, connectionError: connErr };
     }
   }
 
@@ -138,7 +151,19 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     }
 
     const snapshotSize = getSnapshotSize(filePath);
-    const actionId = await tryBondLifecycle(filePath, "modify");
+    const bondResult = await tryBondLifecycle(filePath, "modify");
+
+    // Fail-closed: if AgentGate is unreachable and we're not in fail-open mode, restore immediately
+    if (bondResult.actionId === null && bondResult.connectionError && !failOpen) {
+      log("failed", `${filename}: AgentGate unreachable — change reverted (fail-closed)`);
+      justRestored.add(filePath);
+      try {
+        restoreSnapshot(filePath);
+      } catch (err) {
+        log("error", `Failed to restore ${filename} from snapshot: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
 
     // Use command-based verification if configured, otherwise fall back to size threshold
     const result = verifyCmd
@@ -146,7 +171,7 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
       : verifyChange(filePath, snapshotSize, sizeChangeThreshold);
 
     if (result.passed) {
-      await tryResolve(actionId, true);
+      await tryResolve(bondResult.actionId, true);
       try {
         takeSnapshot(filePath);
       } catch (err) {
@@ -154,7 +179,7 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
       }
       log("passed", `${filename}: ${result.reason}`);
     } else {
-      await tryResolve(actionId, false);
+      await tryResolve(bondResult.actionId, false);
       justRestored.add(filePath);
       try {
         restoreSnapshot(filePath);
@@ -177,8 +202,8 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
       return;
     }
 
-    const actionId = await tryBondLifecycle(filePath, "delete");
-    await tryResolve(actionId, false);
+    const bondResult = await tryBondLifecycle(filePath, "delete");
+    await tryResolve(bondResult.actionId, false);
     justRestored.add(filePath);
     try {
       restoreSnapshot(filePath);

@@ -16,6 +16,7 @@ function parseArgs(argv: string[]): {
   sizeChangeThreshold: number;
   verifyCmd: string;
   verifyCmdTimeoutMs: number;
+  failOpen: boolean;
 } {
   const args = argv.slice(2);
   let directory = "";
@@ -24,6 +25,7 @@ function parseArgs(argv: string[]): {
   let sizeChangeThreshold = DEFAULT_CONFIG.sizeChangeThreshold;
   let verifyCmd = DEFAULT_CONFIG.verifyCmd;
   let verifyCmdTimeoutMs = DEFAULT_CONFIG.verifyCmdTimeoutMs;
+  let failOpen = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--agentgate-url" && args[i + 1]) {
@@ -36,6 +38,8 @@ function parseArgs(argv: string[]): {
       verifyCmd = args[++i];
     } else if (args[i] === "--verify-timeout" && args[i + 1]) {
       verifyCmdTimeoutMs = parseInt(args[++i], 10) * 1000; // user passes seconds, e.g. 30 → 30000
+    } else if (args[i] === "--fail-open") {
+      failOpen = true;
     } else if (args[i] === "--dir" && args[i + 1]) {
       directory = args[++i];
     } else if (!args[i].startsWith("--") && !directory) {
@@ -43,7 +47,7 @@ function parseArgs(argv: string[]): {
     }
   }
 
-  return { directory, agentGateUrl, apiKey, sizeChangeThreshold, verifyCmd, verifyCmdTimeoutMs };
+  return { directory, agentGateUrl, apiKey, sizeChangeThreshold, verifyCmd, verifyCmdTimeoutMs, failOpen };
 }
 
 // ---------------------------------------------------------------------------
@@ -51,7 +55,7 @@ function parseArgs(argv: string[]): {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const { directory, agentGateUrl, apiKey, sizeChangeThreshold, verifyCmd, verifyCmdTimeoutMs } = parseArgs(process.argv);
+  const { directory, agentGateUrl, apiKey, sizeChangeThreshold, verifyCmd, verifyCmdTimeoutMs, failOpen } = parseArgs(process.argv);
 
   // Validate threshold
   if (!Number.isFinite(sizeChangeThreshold) || sizeChangeThreshold < 0) {
@@ -74,6 +78,7 @@ async function main() {
     console.error("  --threshold <percent>   Max allowed size change % (default: 50)");
     console.error("  --verify-cmd <command>  Shell command to run for verification (exit 0 = pass)");
     console.error("  --verify-timeout <sec>  Timeout for verify command in seconds (default: 30)");
+    console.error("  --fail-open             Allow changes through when AgentGate is unreachable (default: fail-closed)");
     process.exit(1);
   }
 
@@ -101,6 +106,7 @@ async function main() {
       sizeChangeThreshold,
       verifyCmd: verifyCmd || undefined,
       verifyCmdTimeoutMs,
+      failOpen,
       onEvent: (event, detail) => {
         const timestamp = new Date().toISOString().slice(11, 19);
         console.log(`[${timestamp}] [${event}] ${detail}`);
