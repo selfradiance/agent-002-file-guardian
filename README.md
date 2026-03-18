@@ -49,13 +49,20 @@ The `--agentgate-url` flag also accepts `https://agentgate.run` — a live demo 
 - **File deletions:** automatically caught and restored from snapshot
 - **What it does NOT watch:** new file creation, subdirectories, or files added after startup
 
+## Safety Features
+
+- **Symlinks skipped** — symlinks in the watched directory are detected and ignored, preventing the guardian from reading or writing outside the directory
+- **Restore-echo suppression** — when the guardian restores a file, the resulting filesystem event is suppressed so it doesn't waste a bond re-checking its own restore
+- **10-second request timeout** — all AgentGate API calls time out after 10 seconds, so the guardian doesn't hang if AgentGate is unreachable
+- **Threshold validation** — invalid CLI threshold values (NaN, negative) are rejected at startup with a clear error
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-35 tests across 5 test files (snapshots, verification, bonds, watcher, integration).
+39 tests across 5 test files (snapshots, verification, bonds, watcher, integration).
 
 Integration tests require a running AgentGate instance:
 
