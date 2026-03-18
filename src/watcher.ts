@@ -125,12 +125,20 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
 
     if (result.passed) {
       await tryResolve(actionId, true);
-      takeSnapshot(filePath); // Update snapshot to new state
+      try {
+        takeSnapshot(filePath);
+      } catch (err) {
+        log("error", `Failed to update snapshot for ${filename}: ${err instanceof Error ? err.message : String(err)}`);
+      }
       log("passed", `${filename}: ${result.reason}`);
     } else {
       await tryResolve(actionId, false);
       justRestored.add(filePath);
-      restoreSnapshot(filePath);
+      try {
+        restoreSnapshot(filePath);
+      } catch (err) {
+        log("error", `Failed to restore ${filename} from snapshot: ${err instanceof Error ? err.message : String(err)}`);
+      }
       log("failed", `${filename}: ${result.reason} — restored from snapshot`);
     }
   }
@@ -150,7 +158,11 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     const actionId = await tryBondLifecycle(filePath, "delete");
     await tryResolve(actionId, false);
     justRestored.add(filePath);
-    restoreSnapshot(filePath);
+    try {
+      restoreSnapshot(filePath);
+    } catch (err) {
+      log("error", `Failed to restore deleted ${filename} from snapshot: ${err instanceof Error ? err.message : String(err)}`);
+    }
     log("restored", `${filename}: Deleted file restored from snapshot`);
   }
 
@@ -176,6 +188,16 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     handleUnlink(fp).catch((err) => {
       log("error", `Unhandled error in handleUnlink: ${err instanceof Error ? err.message : String(err)}`);
     });
+  });
+  watcher.on("error", (err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("ENOENT") || msg.includes("no longer exists")) {
+      log("error", `Watched directory was deleted — guardian cannot continue`);
+      watcher.close().catch(() => {});
+      log("stopped", "Watcher stopped due to directory deletion");
+    } else {
+      log("error", `Watcher error: ${msg}`);
+    }
   });
 
   return {

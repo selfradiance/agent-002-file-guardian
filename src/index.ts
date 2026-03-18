@@ -102,8 +102,11 @@ async function main() {
   // Graceful shutdown on Ctrl+C
   process.on("SIGINT", async () => {
     console.log("\nShutting down...");
-    if (handle) {
-      await handle.stop();
+    try {
+      if (handle) await handle.stop();
+    } catch (err) {
+      console.error(`Error during shutdown: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
     process.exit(0);
   });
