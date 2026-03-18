@@ -8,6 +8,9 @@ export function takeSnapshot(filePath: string): void {
   if (!fs.existsSync(absolute)) {
     throw new Error(`File not found: ${absolute}`);
   }
+  if (fs.lstatSync(absolute).isSymbolicLink()) {
+    throw new Error(`Refusing to snapshot symlink: ${absolute}`);
+  }
   snapshots.set(absolute, fs.readFileSync(absolute));
 }
 
@@ -38,7 +41,10 @@ export function snapshotAll(directory: string): void {
   const entries = fs.readdirSync(absolute, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isFile()) {
-      takeSnapshot(path.join(absolute, entry.name));
+      const fullPath = path.join(absolute, entry.name);
+      // Skip symlinks — they could point outside the watched directory
+      if (fs.lstatSync(fullPath).isSymbolicLink()) continue;
+      takeSnapshot(fullPath);
     }
   }
 }

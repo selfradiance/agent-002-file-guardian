@@ -114,4 +114,25 @@ describe("snapshots", () => {
     restoreSnapshot(file);
     expect(fs.readFileSync(file)).toEqual(buf);
   });
+
+  it("takeSnapshot throws on symlinks", () => {
+    const realFile = path.join(tmpDir, "real.txt");
+    const link = path.join(tmpDir, "link.txt");
+    fs.writeFileSync(realFile, "data", "utf8");
+    fs.symlinkSync(realFile, link);
+
+    expect(() => takeSnapshot(link)).toThrow("Refusing to snapshot symlink");
+  });
+
+  it("snapshotAll skips symlinks", () => {
+    const realFile = path.join(tmpDir, "real.txt");
+    const link = path.join(tmpDir, "link.txt");
+    fs.writeFileSync(realFile, "data", "utf8");
+    fs.symlinkSync(realFile, link);
+
+    snapshotAll(tmpDir);
+
+    expect(hasSnapshot(realFile)).toBe(true);
+    expect(hasSnapshot(link)).toBe(false);
+  });
 });

@@ -90,6 +90,16 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
   async function handleChange(filePath: string): Promise<void> {
     if (isDuplicate(filePath)) return;
 
+    // Skip symlinks — they could point outside the watched directory
+    try {
+      if (fs.lstatSync(filePath).isSymbolicLink()) {
+        log("skip", `Symlink skipped: ${path.basename(filePath)}`);
+        return;
+      }
+    } catch {
+      // lstat may fail if file was already deleted between event and check
+    }
+
     const filename = path.basename(filePath);
     log("change", `Change detected: ${filename}`);
 
@@ -136,6 +146,7 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
   const watcher: FSWatcher = watch(absoluteDir, {
     ignoreInitial: true,
     depth: 0,
+    followSymlinks: false,
   });
 
   // Wait for chokidar to be ready before returning, so callers
