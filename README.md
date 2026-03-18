@@ -4,11 +4,69 @@ A bonded file guardian that watches a directory and enforces accountability on f
 
 When an AI coding agent (or anything else) modifies or deletes a file, the guardian posts a bond, verifies the change, and either releases the bond or slashes it and restores the file from a snapshot.
 
-## Status
-Under construction — v0.1.0 in progress.
-
 ## Why
-AI coding agents are being given filesystem access with zero accountability. A developer recently lost 2.5 years of production data when an AI agent executed a single destructive command. This project exists so that can't happen silently.
+
+AI coding agents are being given filesystem access with zero accountability. A developer recently lost 2.5 years of production data when an AI agent executed a single destructive command. Rate limits and permission systems don't help when the agent has legitimate access — the problem is that nothing makes the agent economically accountable for what it does with that access. This project exists so that destructive file changes can't happen silently.
+
+## How It Works
+
+1. The guardian starts and snapshots every file in the watched directory
+2. A file change is detected (modification or deletion)
+3. A bond is posted to AgentGate (the agent puts up collateral)
+4. Verification runs: does the file still exist? Is it non-empty? Is the size change within the threshold?
+5. If verification passes → bond released, snapshot updated to the new file state
+6. If verification fails → bond slashed, file restored from the pre-change snapshot
+
+## Quick Start
+
+**Prerequisites:** Node.js 20+, a running [AgentGate](https://github.com/selfradiance/agentgate) instance.
+
+```bash
+# Clone and install
+git clone https://github.com/selfradiance/agent-002-file-guardian.git
+cd agent-002-file-guardian
+npm install
+
+# Run the guardian
+npx tsx src/index.ts /path/to/directory --api-key YOUR_AGENTGATE_REST_KEY
+```
+
+**Options:**
+
+```
+npx tsx src/index.ts <directory> [options]
+
+  --agentgate-url <url>   AgentGate server URL (default: http://127.0.0.1:3000)
+  --api-key <key>         AgentGate REST key (or set AGENTGATE_REST_KEY env var)
+  --threshold <percent>   Max allowed size change % (default: 50)
+```
+
+The `--agentgate-url` flag also accepts `https://agentgate.run` — a live demo instance available until approximately March 2027.
+
+## What It Watches For
+
+- **File modifications:** checks that the file wasn't emptied and the size didn't change beyond the configured threshold
+- **File deletions:** automatically caught and restored from snapshot
+- **What it does NOT watch:** new file creation, subdirectories, or files added after startup
+
+## Tests
+
+```bash
+npm test
+```
+
+35 tests across 5 test files (snapshots, verification, bonds, watcher, integration).
+
+Integration tests require a running AgentGate instance:
+
+```bash
+AGENTGATE_URL=http://127.0.0.1:3000 AGENTGATE_REST_KEY=yourkey npm test
+```
 
 ## Built On
+
 - [AgentGate](https://github.com/selfradiance/agentgate) — the bond-and-slash accountability layer for AI agents
+
+## License
+
+MIT
