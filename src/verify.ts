@@ -62,6 +62,13 @@ export function verifyCommand(
   } catch (err: unknown) {
     const error = err as { status?: number; killed?: boolean; signal?: string; stderr?: Buffer; message?: string };
 
+    if (error.message?.includes("ENOENT") || error.status === 127) {
+      return {
+        passed: false,
+        reason: `Command not found: ${command}`,
+      };
+    }
+
     if (error.killed || error.signal === "SIGTERM") {
       return {
         passed: false,

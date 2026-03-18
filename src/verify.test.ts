@@ -123,6 +123,12 @@ describe("verifyCommand", () => {
     expect(result.passed).toBe(true);
   });
 
+  it("fails with clear message when command binary doesn't exist", () => {
+    const result = verifyCommand("tcs --noEmit", tmpDir, 5000);
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("Command not found");
+  });
+
   it("falls back to size threshold when no command specified (integration check)", () => {
     // This test confirms the existing verifyChange still works as the fallback
     const file = path.join(tmpDir, "fallback.txt");
