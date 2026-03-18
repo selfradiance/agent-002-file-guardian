@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
+import http from "node:http";
 import {
   registerAgent,
   postBond,
@@ -50,6 +51,21 @@ describe("bonds — unit tests (no server)", () => {
     expect(keys.publicKey.length).toBeGreaterThan(0);
     expect(keys.privateKey.length).toBeGreaterThan(0);
   });
+
+  it("times out when server never responds", async () => {
+    // Start a server that accepts connections but never sends a response
+    const hangingServer = http.createServer(() => { /* deliberately no response */ });
+    await new Promise<void>((resolve) => hangingServer.listen(0, "127.0.0.1", resolve));
+    const port = (hangingServer.address() as { port: number }).port;
+    const hangUrl = `http://127.0.0.1:${port}`;
+
+    const keys = generateKeypair();
+    await expect(
+      registerAgent(hangUrl, FAKE_KEY, keys),
+    ).rejects.toThrow(/timed out/);
+
+    await new Promise<void>((resolve) => hangingServer.close(() => resolve()));
+  }, 15000); // allow 15s for the 10s timeout + overhead
 });
 
 // ---------------------------------------------------------------------------

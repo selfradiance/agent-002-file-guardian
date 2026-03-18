@@ -71,6 +71,8 @@ export function generateKeypair(): AgentKeys {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+const REQUEST_TIMEOUT_MS = 10_000; // 10 seconds
+
 async function parseResponse(response: Response): Promise<Record<string, unknown>> {
   try {
     return await response.json() as Record<string, unknown>;
@@ -92,17 +94,31 @@ async function signedPost(
   const timestamp = Date.now().toString();
   const signature = signRequest(publicKey, privateKey, nonce, "POST", path, timestamp, body);
 
-  const response = await fetch(new URL(path, baseUrl), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-nonce": nonce,
-      "x-agentgate-key": apiKey,
-      "x-agentgate-timestamp": timestamp,
-      "x-agentgate-signature": signature,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(new URL(path, baseUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-nonce": nonce,
+        "x-agentgate-key": apiKey,
+        "x-agentgate-timestamp": timestamp,
+        "x-agentgate-signature": signature,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`AgentGate request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${path}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = await parseResponse(response);
 
