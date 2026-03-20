@@ -1,18 +1,26 @@
 # Agent 002: File Guardian
 
-A bonded file guardian that watches a directory and enforces accountability on file changes through [AgentGate](https://github.com/selfradiance/agentgate).
+A rollback-enforcing file watcher for AI-assisted coding that adds bond/slash accountability through [AgentGate](https://github.com/selfradiance/agentgate).
 
-When an AI coding agent (or anything else) modifies or deletes a file, the guardian posts a bond, verifies the change, and either releases the bond or slashes it and restores the file from a snapshot.
+When an AI coding agent (or anything else) modifies or deletes a file, the guardian posts a bond, verifies the change, and either releases the bond or slashes it and restores the file from a snapshot. The guardian process posts the bond on behalf of whatever agent made the file change — the agent itself is not aware of the bond. The guardian is an independent enforcement layer that watches the directory and attaches accountability after the fact, using its own Ed25519 keypair as its identity.
 
 ## Why
 
 AI coding agents are being given filesystem access with zero accountability. A developer recently lost 2.5 years of production data when an AI agent executed a single destructive command. Rate limits and permission systems don't help when the agent has legitimate access — the problem is that nothing makes the agent economically accountable for what it does with that access. This project exists so that destructive file changes can't happen silently.
 
+## Why Not Git / Hooks / CI?
+
+**"Why not just use git?"** — Git tracks history after the fact. It doesn't create an automatic gate or consequence at the moment a file is mutated. The guardian acts at the point of change — detecting, verifying, and reverting before the next command runs — not after a review cycle.
+
+**"Why not pre-commit hooks or watch-mode tests?"** — Those run verification but don't revert on failure or attach an economic record. The guardian combines verification, automatic rollback, and bond/slash accountability in a single loop. A hook can tell you something broke; the guardian fixes it and records who paid.
+
+**"Why not sandbox the agent?"** — Valid for some setups, but many real workflows grant agents legitimate write access to working directories (Claude Code, Cursor, Copilot Workspace). This is a runtime enforcement layer for environments where the agent already has access and you want accountability, not restriction.
+
 ## How It Works
 
-1. The guardian starts and snapshots every file in the watched directory
+1. The guardian starts and snapshots every file in the watched directory (non-recursive — files present at startup only, by design for v0.2.0)
 2. A file change is detected (modification or deletion)
-3. A bond is posted to AgentGate (the agent puts up collateral)
+3. A bond is posted to AgentGate (the guardian puts up collateral on behalf of the agent)
 4. Verification runs: either a user-supplied command (`--verify-cmd`, exit 0 = pass) or the default size-threshold check (file exists, not empty, size within threshold)
 5. If verification passes → bond released, snapshot updated to the new file state
 6. If verification fails → bond slashed, file restored from the pre-change snapshot
@@ -30,9 +38,14 @@ npm install
 # Watch a TypeScript project — restore any change that breaks the build
 npx tsx src/index.ts ./src --verify-cmd 'tsc --noEmit' --api-key YOUR_AGENTGATE_REST_KEY
 
-# Or watch any directory with the default size-threshold verification
+# Watch a Python project — restore any change that breaks tests
+npx tsx src/index.ts ./src --verify-cmd 'python -m pytest tests/' --api-key YOUR_AGENTGATE_REST_KEY
+
+# Bare-minimum fallback: default size-threshold verification (no verify command)
 npx tsx src/index.ts /path/to/directory --api-key YOUR_AGENTGATE_REST_KEY
 ```
+
+The `--verify-cmd` flag is the primary way to use the guardian. The default size-threshold verifier (file exists, not empty, size within threshold) is a bare-minimum fallback for cases where no verification command is available.
 
 **Options:**
 
@@ -67,11 +80,15 @@ The `--agentgate-url` flag also accepts `https://agentgate.run` — a live demo 
 [14:36:46] [passed] utils.ts: Command passed: tsc --noEmit
 ```
 
-## What It Watches For
+## Scope (v0.2.0)
 
-- **File modifications:** runs the verify command (if configured) or checks that the file wasn't emptied and the size didn't change beyond the threshold
-- **File deletions:** automatically caught and restored from snapshot — no verification needed, deletions always fail
-- **What it does NOT watch:** new file creation, subdirectories, or files added after startup
+This is a deliberately scoped proof-of-concept:
+
+- **Watches a single directory** (non-recursive) — files present at startup are monitored
+- **Does not watch new files** created after startup, subdirectories, or nested paths
+- **One verification command** applies to all file changes (no per-file rules)
+
+This scope is intentional. Agent 002 proves that the bond/verify/rollback loop works with real verification commands. Recursive watching, per-file rules, and multi-directory support are straightforward extensions but outside the scope of the proof-of-concept.
 
 ## Safety Features
 
