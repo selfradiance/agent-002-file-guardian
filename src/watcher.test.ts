@@ -203,7 +203,7 @@ describe("watcher", () => {
     expect(fs.readFileSync(file, "utf8")).toBe("original content here!");
   });
 
-  it("non-connection bond error (400) still runs verification normally", async () => {
+  it("non-connection bond error (400) triggers fail-closed and restores file", async () => {
     vi.mocked(bonds.postBond).mockRejectedValue(new Error("AgentGate /v1/bonds/lock failed (400): bad request"));
 
     const file = path.join(tmpDir, "api-err.txt");
@@ -216,12 +216,36 @@ describe("watcher", () => {
       onEvent,
     });
 
-    // Modify within threshold — verification should still pass despite bond error
+    // Modify file — should be reverted because bond failed (fail-closed applies to all AgentGate errors)
     fs.writeFileSync(file, "important!");
+    await waitForEvent(events, "failed");
+
+    const failedEvent = events.find((e) => e.event === "failed");
+    expect(failedEvent).toBeDefined();
+    expect(failedEvent!.detail).toContain("API error");
+    expect(failedEvent!.detail).toContain("fail-closed");
+    expect(fs.readFileSync(file, "utf8")).toBe("important");
+  });
+
+  it("non-connection bond error (400) with --fail-open allows change through", async () => {
+    vi.mocked(bonds.postBond).mockRejectedValue(new Error("AgentGate /v1/bonds/lock failed (400): bad request"));
+
+    const file = path.join(tmpDir, "api-err-open.txt");
+    fs.writeFileSync(file, "original content here");
+
+    handle = await startWatcher({
+      directory: tmpDir,
+      agentGateUrl: "http://fake",
+      apiKey: "fake",
+      failOpen: true,
+      sizeChangeThreshold: 0.5,
+      onEvent,
+    });
+
+    fs.writeFileSync(file, "original content here!");
     await waitForEvent(events, "passed");
 
-    // Change was allowed through because it's a 400 (API error), not a connection error
-    expect(fs.readFileSync(file, "utf8")).toBe("important!");
+    expect(fs.readFileSync(file, "utf8")).toBe("original content here!");
   });
 
   it("restore-triggered chokidar event does not post a second bond", async () => {

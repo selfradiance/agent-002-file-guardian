@@ -104,6 +104,10 @@ This scope is intentional. Agent 002 proves that the bond/verify/rollback loop w
 
 The `--verify-cmd` flag runs an arbitrary shell command via `/bin/sh`. This is a deliberate design choice — the guardian's operator specifies the command, and it runs with the same permissions as the guardian process. Do not source the `--verify-cmd` value from untrusted input (e.g., user-facing config files or environment variables set by other processes). The trust boundary is the same as a `Makefile` target or an npm script.
 
+## Known Issues
+
+- **Do not pass secrets inline in `--verify-cmd`.** The guardian logs the full command string in the startup banner and in verification failure messages (including stderr output). If you embed tokens, passwords, or secret URLs directly in the command, they will appear in logs. Use environment variables or config files instead — e.g., `--verify-cmd './run-tests.sh'` where the script reads secrets from the environment, not `--verify-cmd 'curl -H "Authorization: Bearer sk-..."'`.
+
 ## Tests
 
 ```bash

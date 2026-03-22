@@ -78,10 +78,11 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     const prev = fileLocks.get(filePath) ?? Promise.resolve();
     const next = prev.then(fn, fn); // run fn regardless of whether prev succeeded or failed
     fileLocks.set(filePath, next);
-    // Clean up the map entry when the chain settles to avoid unbounded growth
-    next.then(() => {
+    // Clean up the map entry when the chain settles (fulfillment or rejection) to avoid unbounded growth
+    const cleanup = () => {
       if (fileLocks.get(filePath) === next) fileLocks.delete(filePath);
-    });
+    };
+    next.then(cleanup, cleanup);
     return next;
   }
 
@@ -118,7 +119,8 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     try {
       await resolveBond(agentGateUrl, apiKey, keys, actionId, passed);
     } catch (err) {
-      log("error", `Bond resolution failed: ${err instanceof Error ? err.message : String(err)}`);
+      const outcome = passed ? "release" : "slash";
+      log("warn", `Bond resolution failed (${outcome}): ${err instanceof Error ? err.message : String(err)} — bond ${actionId} is orphaned and will be auto-slashed by AgentGate after TTL expiry`);
     }
   }
 
@@ -154,9 +156,10 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     const snapshotSize = getSnapshotSize(filePath);
     const bondResult = await tryBondLifecycle(filePath, "modify");
 
-    // Fail-closed: if AgentGate is unreachable and we're not in fail-open mode, restore immediately
-    if (bondResult.actionId === null && bondResult.connectionError && !failOpen) {
-      log("failed", `${filename}: AgentGate unreachable — change reverted (fail-closed)`);
+    // Fail-closed: if AgentGate failed (connection error, 4xx, 5xx, auth, etc.) and we're not in fail-open mode, restore immediately
+    if (bondResult.actionId === null && !failOpen) {
+      const reason = bondResult.connectionError ? "AgentGate unreachable" : "AgentGate API error";
+      log("failed", `${filename}: ${reason} — change reverted (fail-closed)`);
       justRestored.add(filePath);
       try {
         restoreSnapshot(filePath);
@@ -231,6 +234,15 @@ export async function startWatcher(options: WatcherOptions): Promise<WatcherHand
     withFileLock(fp, () => handleChange(fp)).catch((err) => {
       log("error", `Unhandled error in handleChange: ${err instanceof Error ? err.message : String(err)}`);
     });
+  });
+  // On some platforms, chokidar reports a recreated file as "add" instead of "change".
+  // Clear the restore-echo marker so the next real edit isn't skipped.
+  watcher.on("add", (fp) => {
+    if (justRestored.has(fp)) {
+      justRestored.delete(fp);
+      log("skip", `Restore echo skipped (add): ${path.basename(fp)}`);
+      return;
+    }
   });
   watcher.on("unlink", (fp) => {
     withFileLock(fp, () => handleUnlink(fp)).catch((err) => {
